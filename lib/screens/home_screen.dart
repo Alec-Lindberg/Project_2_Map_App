@@ -2,8 +2,11 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:hive_flutter/hive_flutter.dart';
+
 import '../models/state_visit.dart';
-import '../models/state_info.dart'; // the small static model
+import '../models/state_info.dart';
+import 'map_screen.dart';
+import '../services/backend_service.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -16,6 +19,11 @@ class _HomeScreenState extends State<HomeScreen> {
   late Future<List<StateInfo>> _statesFuture;
   String? _selectedCode;
   final TextEditingController _favoriteController = TextEditingController();
+
+  // Backend service
+  final BackendService _backendService = BackendService();
+  String _backendMessage = 'Press "Test Backend" to verify service.';
+  bool _backendLoading = false;
 
   @override
   void initState() {
@@ -31,7 +39,6 @@ class _HomeScreenState extends State<HomeScreen> {
           .map((e) => StateInfo.fromJson(e as Map<String, dynamic>))
           .toList();
     } catch (e) {
-      // basic exception handling for extra points
       debugPrint('Error loading states.json: $e');
       return [];
     }
@@ -55,9 +62,27 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  int _calculateVisitedCount() {
-    final box = Hive.box<StateVisit>('stateVisits');
-    return box.values.where((v) => v.visited).length;
+  Future<void> _testBackend() async {
+    setState(() {
+      _backendLoading = true;
+      _backendMessage = 'Contacting backend...';
+    });
+
+    try {
+      final todo = await _backendService.fetchSampleTodo();
+      setState(() {
+        _backendMessage =
+        'Loaded Todo ${todo.id}: "${todo.title}" (completed: ${todo.completed})';
+      });
+    } catch (e) {
+      setState(() {
+        _backendMessage = 'Backend error: $e';
+      });
+    } finally {
+      setState(() {
+        _backendLoading = false;
+      });
+    }
   }
 
   @override
@@ -68,15 +93,24 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: const Text('50 State Tracker'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.map),
+            tooltip: 'Map View',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const MapScreen()),
+              );
+            },
+          ),
           PopupMenuButton<String>(
             onSelected: (value) {
               if (value == 'stats') {
-                // Navigate to a StatsScreen for extra points
-                // Navigator.push(...);
+                // Future stats screen
               }
             },
-            itemBuilder: (context) => [
-              const PopupMenuItem(
+            itemBuilder: (context) => const [
+              PopupMenuItem(
                 value: 'stats',
                 child: Text('Visited Stats'),
               ),
@@ -84,6 +118,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
+
       body: FutureBuilder<List<StateInfo>>(
         future: _statesFuture,
         builder: (context, snapshot) {
@@ -97,7 +132,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
           return Column(
             children: [
-              // Progress bar / summary
+              // Progress tracker
               Padding(
                 padding: const EdgeInsets.all(8.0),
                 child: ValueListenableBuilder(
@@ -119,13 +154,45 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
 
-              // "Map" grid
+              // Backend test area
+              Padding(
+                padding:
+                const EdgeInsets.symmetric(horizontal: 12.0, vertical: 4.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Backend Status:',
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      _backendMessage,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    const SizedBox(height: 4),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: ElevatedButton.icon(
+                        onPressed: _backendLoading ? null : _testBackend,
+                        icon: const Icon(Icons.cloud_download),
+                        label: Text(_backendLoading
+                            ? 'Loading...'
+                            : 'Test Backend'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              // The “map grid”
               Expanded(
                 flex: 2,
                 child: GridView.builder(
                   padding: const EdgeInsets.all(8),
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 5, // 5x10 grid, roughly map-like
+                  gridDelegate:
+                  const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 5,
                     childAspectRatio: 1.2,
                     mainAxisSpacing: 4,
                     crossAxisSpacing: 4,
@@ -136,18 +203,18 @@ class _HomeScreenState extends State<HomeScreen> {
                     final visit = _getVisitFor(state.code);
 
                     final isSelected = _selectedCode == state.code;
-                    final isVisited = visit.visited;
 
                     return GestureDetector(
                       onTap: () => _selectState(state.code),
                       child: Card(
-                        color: isVisited
-                            ? Colors.green[300]
-                            : Colors.grey[300],
+                        color:
+                        visit.visited ? Colors.green[300] : Colors.grey[300],
                         shape: RoundedRectangleBorder(
                           side: isSelected
                               ? const BorderSide(
-                              color: Colors.indigo, width: 2)
+                            color: Colors.indigo,
+                            width: 2,
+                          )
                               : BorderSide.none,
                           borderRadius: BorderRadius.circular(8),
                         ),
@@ -155,9 +222,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           child: Text(
                             state.code,
                             style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                            ),
+                                fontSize: 16, fontWeight: FontWeight.bold),
                           ),
                         ),
                       ),
@@ -166,7 +231,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
 
-              // Detail panel for currently selected state
+              // Bottom detail panel
               Expanded(
                 flex: 1,
                 child: _selectedCode == null
@@ -189,16 +254,16 @@ class _HomeScreenState extends State<HomeScreen> {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
+      decoration: const BoxDecoration(
         color: Colors.white,
-        boxShadow: const [
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+        boxShadow: [
           BoxShadow(
             blurRadius: 4,
             offset: Offset(0, -2),
             spreadRadius: 1,
           ),
         ],
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -206,9 +271,7 @@ class _HomeScreenState extends State<HomeScreen> {
           Text(
             'Details for $code',
             style: const TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-            ),
+                fontSize: 18, fontWeight: FontWeight.bold),
           ),
           Row(
             children: [
@@ -240,7 +303,8 @@ class _HomeScreenState extends State<HomeScreen> {
               label: const Text('Save'),
               onPressed: () {
                 setState(() {
-                  visit.favoriteThing = _favoriteController.text.trim();
+                  visit.favoriteThing =
+                      _favoriteController.text.trim();
                   visit.save();
                 });
                 ScaffoldMessenger.of(context).showSnackBar(
@@ -253,4 +317,11 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
+
+  @override
+  void dispose() {
+    _favoriteController.dispose();
+    super.dispose();
+  }
 }
+
